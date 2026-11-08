@@ -71,8 +71,8 @@ public final class ClientSmokeTest {
     };
 
     private static String status(MinecraftServer server, int i) {
-        var host = new HostKey(server.overworld().dimension(), i == 2 ? IDLE_MODEM : MODEM);
-        return HubScheduler.status(host, TARGETS[i]).name();
+        var host = new HostKey.Placed(server.overworld().dimension(), i == 2 ? IDLE_MODEM : MODEM);
+        return HubScheduler.status(host, net.minecraft.core.GlobalPos.of(server.overworld().dimension(), TARGETS[i])).name();
     }
 
     private static void setup(MinecraftServer server, UUID uuid) {
@@ -97,12 +97,12 @@ public final class ClientSmokeTest {
         level.setBlockAndUpdate(TARGETS[2], Blocks.CHEST.defaultBlockState());
 
         var data = LinkSavedData.get(server);
-        var host = new HostKey(level.dimension(), MODEM);
-        var idle = new HostKey(level.dimension(), IDLE_MODEM);
+        var host = new HostKey.Placed(level.dimension(), MODEM);
+        var idle = new HostKey.Placed(level.dimension(), IDLE_MODEM);
         for (int i = 0; i < TARGETS.length; i++) {
             var peripheral = PeripheralLookup.find(level, TARGETS[i], Direction.UP);
             if (peripheral == null) continue;
-            data.addLink(i == 2 ? idle : host, data.createLink(level.dimension(), TARGETS[i], Direction.UP, peripheral.getType()));
+            data.addLink(i == 2 ? idle : host, net.minecraft.core.GlobalPos.of(level.dimension(), TARGETS[i]), Direction.UP, peripheral.getType());
         }
         level.setBlockAndUpdate(TARGETS[1], Blocks.AIR.defaultBlockState()); // now a "missing" link
 

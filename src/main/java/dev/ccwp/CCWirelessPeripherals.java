@@ -8,7 +8,10 @@ import dev.ccwp.hub.HubScheduler;
 import dev.ccwp.hub.WirelessHubMethods;
 import dev.ccwp.net.LinkViewPayload;
 import dev.ccwp.net.LinkViewSync;
+import net.minecraft.core.GlobalPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.player.Player;
 import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
@@ -18,6 +21,7 @@ import net.neoforged.fml.event.config.ModConfigEvent;
 import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
+import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.level.BlockEvent;
 import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
@@ -43,6 +47,7 @@ public final class CCWirelessPeripherals {
         NeoForge.EVENT_BUS.addListener(this::onServerTick);
         NeoForge.EVENT_BUS.addListener(this::onServerStopped);
         NeoForge.EVENT_BUS.addListener(EventPriority.LOWEST, this::onBlockBreak);
+        NeoForge.EVENT_BUS.addListener(this::onEntityJoinLevel);
         NeoForge.EVENT_BUS.addListener(this::onRegisterCommands);
     }
 
@@ -84,10 +89,19 @@ public final class CCWirelessPeripherals {
         if (event.isCanceled() || !(event.getLevel() instanceof ServerLevel level)) return;
         var data = LinkSavedData.get(level.getServer());
         if (Blacklists.isHostType(event.getState())) {
-            var key = new HostKey(level.dimension(), event.getPos());
+            var key = new HostKey.Placed(level.dimension(), event.getPos());
             if (data.removeHost(key)) HubScheduler.markHostDirty(key);
         }
-        for (var host : data.removeLinksTo(level.dimension(), event.getPos())) HubScheduler.markHostDirty(host);
+        HubScheduler.markHostsDirty(data.removeLinksTo(GlobalPos.of(level.dimension(), event.getPos())));
+    }
+
+    /**
+     * A player (or a dropped item) arriving in a level may have carried a pocket computer to another dimension, where
+     * its links in the old dimension are unreachable. Checking costs one comparison per running mobile host.
+     */
+    private void onEntityJoinLevel(EntityJoinLevelEvent event) {
+        if (event.getLevel().isClientSide()) return;
+        if (event.getEntity() instanceof Player || event.getEntity() instanceof ItemEntity) HubScheduler.checkMobileDimensions();
     }
 
     private void onRegisterCommands(RegisterCommandsEvent event) {

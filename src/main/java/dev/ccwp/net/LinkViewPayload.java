@@ -11,6 +11,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 import java.util.List;
+import java.util.Optional;
 
 /** Server → client: the links near a player holding a Peripheral Linker, for drawing lines. */
 public record LinkViewPayload(List<HostView> hosts) implements CustomPacketPayload {
@@ -28,11 +29,23 @@ public record LinkViewPayload(List<HostView> hosts) implements CustomPacketPaylo
             LinkView::new);
     }
 
-    public record HostView(BlockPos host, List<LinkView> links) {
+    /**
+     * @param computerId The computer id of a pocket computer or turtle host, or -1 for a placed host.
+     * @param host       Where the host is: a placed host's block, or a mobile host's current position if it is
+     *                   running in the player's dimension. Empty for a mobile host that isn't (links are still sent,
+     *                   so their blocks can be drawn).
+     * @param links      Links in the player's dimension.
+     */
+    public record HostView(int computerId, Optional<BlockPos> host, List<LinkView> links) {
         public static final StreamCodec<ByteBuf, HostView> STREAM_CODEC = StreamCodec.composite(
-            BlockPos.STREAM_CODEC, HostView::host,
+            ByteBufCodecs.VAR_INT, HostView::computerId,
+            ByteBufCodecs.optional(BlockPos.STREAM_CODEC), HostView::host,
             LinkView.STREAM_CODEC.apply(ByteBufCodecs.list()), HostView::links,
             HostView::new);
+
+        public boolean isMobile() {
+            return computerId >= 0;
+        }
     }
 
     public static final StreamCodec<ByteBuf, LinkViewPayload> STREAM_CODEC = StreamCodec.composite(

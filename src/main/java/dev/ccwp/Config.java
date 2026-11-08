@@ -27,12 +27,14 @@ public final class Config {
         var server = new ModConfigSpec.Builder();
         server.push("links");
         WIRELESS_LINK_RANGE = server
-            .comment("Maximum distance (in blocks, centre to centre) between a wireless modem host and a linked peripheral.")
+            .comment("Maximum distance (in blocks, centre to centre) between a placed wireless (non-ender) host and a linked peripheral.")
             .defineInRange("wirelessLinkRange", 16, 1, 256);
         ENDER_LINK_RANGE = server
-            .comment("Maximum distance (in blocks, centre to centre) between an ender modem host and a linked peripheral.",
-                "Hosts count as ender hosts when they are in the #ccwirelessperipherals:ender_hosts block tag.")
-            .defineInRange("enderLinkRange", 64, 1, 1024);
+            .comment("Maximum distance (in blocks, centre to centre) between a placed ender host and a linked peripheral.",
+                "0 = unlimited within the dimension, like CC's ender modems. Placed hosts count as ender hosts when they",
+                "are in the #ccwirelessperipherals:ender_hosts block tag. Pocket computers and turtles (which can only",
+                "host with an ender modem) ignore this and are always unlimited within their dimension.")
+            .defineInRange("enderLinkRange", 0, 0, 1_000_000);
         MAX_LINKS_PER_HOST = server
             .comment("Maximum number of peripherals that can be linked to a single host. 0 = unlimited.")
             .defineInRange("maxLinksPerHost", 32, 0, 4096);

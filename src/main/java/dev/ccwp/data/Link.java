@@ -4,31 +4,46 @@ import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.GlobalPos;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.level.Level;
+
+import java.util.Optional;
 
 /**
- * A wireless link from a host to a peripheral block.
+ * A wireless link from a host to a peripheral block. The block's name and type are stored per block in
+ * {@link LinkSavedData}, shared by every host that links it.
  *
- * @param pos    The peripheral block (same dimension as the host).
+ * @param target The peripheral block. For placed hosts it is always in the host's dimension. A mobile host can have
+ *               links in several dimensions; only those in its current dimension are reachable.
  * @param face   The face that was clicked; used as the capability side when looking up the peripheral.
- * @param type   The peripheral type last seen. When it changes, an automatic name is replaced by a fresh one, like wired
- *               modems do. A custom name is kept.
- * @param name   The name exposed to Lua, e.g. {@code minecraft:chest_w0} or a custom name set by a player.
- * @param custom Whether {@code name} was chosen by a player (see {@link LinkNames}).
  */
-public record Link(BlockPos pos, Direction face, String type, String name, boolean custom) {
-    public static final Codec<Link> CODEC = RecordCodecBuilder.create(i -> i.group(
-        BlockPos.CODEC.fieldOf("pos").forGetter(Link::pos),
-        Direction.CODEC.fieldOf("face").forGetter(Link::face),
-        Codec.STRING.fieldOf("type").forGetter(Link::type),
-        Codec.STRING.fieldOf("name").forGetter(Link::name),
-        Codec.BOOL.optionalFieldOf("custom", false).forGetter(Link::custom)
-    ).apply(i, Link::new));
-
-    public Link {
-        pos = pos.immutable();
+public record Link(GlobalPos target, Direction face) {
+    public BlockPos pos() {
+        return target.pos();
     }
 
-    public Link withName(String type, String name, boolean custom) {
-        return new Link(pos, face, type, name, custom);
+    public ResourceKey<Level> dimension() {
+        return target.dimension();
+    }
+
+    /**
+     * The stored form of a link. Saves from before per-block names have no dimension (it is the host's) and carry the
+     * link's own type and name, which are merged into the per-block names on load.
+     */
+    record Stored(Optional<ResourceKey<Level>> dimension, BlockPos pos, Direction face,
+                  Optional<String> type, Optional<String> name, boolean custom) {
+        static final Codec<Stored> CODEC = RecordCodecBuilder.create(i -> i.group(
+            Level.RESOURCE_KEY_CODEC.optionalFieldOf("dimension").forGetter(Stored::dimension),
+            BlockPos.CODEC.fieldOf("pos").forGetter(Stored::pos),
+            Direction.CODEC.fieldOf("face").forGetter(Stored::face),
+            Codec.STRING.optionalFieldOf("type").forGetter(Stored::type),
+            Codec.STRING.optionalFieldOf("name").forGetter(Stored::name),
+            Codec.BOOL.optionalFieldOf("custom", false).forGetter(Stored::custom)
+        ).apply(i, Stored::new));
+
+        static Stored of(Link link) {
+            return new Stored(Optional.of(link.dimension()), link.pos(), link.face(), Optional.empty(), Optional.empty(), false);
+        }
     }
 }

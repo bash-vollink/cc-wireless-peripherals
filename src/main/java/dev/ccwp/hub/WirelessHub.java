@@ -12,8 +12,11 @@ import dev.ccwp.data.Link;
 import dev.ccwp.data.LinkSavedData;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.GlobalPos;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.capabilities.BlockCapabilityCache;
 
@@ -40,12 +43,14 @@ public final class WirelessHub {
     /** Currently available peripherals (immutable snapshot, replaced under {@link #lock}). */
     private volatile Map<String, Resolved> resolved = Map.of();
     private volatile Map<String, IPeripheral> peripherals = Map.of();
-    /** Positions of links with a live peripheral; read by the client sync. */
-    private volatile Set<BlockPos> connected = Set.of();
+    /** Blocks of links with a live peripheral; read by the client sync. */
+    private volatile Set<GlobalPos> connected = Set.of();
+    /** Dimension the modem was in at the last refresh; checked when a mobile host may have moved. */
+    private volatile @Nullable ResourceKey<Level> publishedDimension;
 
     // ---- server thread only ----
     private @Nullable HostKey key;
-    private final Map<BlockPos, Slot> slots = new HashMap<>();
+    private final Map<GlobalPos, Slot> slots = new HashMap<>();
 
     private record Resolved(IPeripheral peripheral, Map<String, PeripheralMethod> methods) {
     }
@@ -123,12 +128,33 @@ public final class WirelessHub {
         return key;
     }
 
-    boolean isConnected(BlockPos pos) {
-        return connected.contains(pos);
+    boolean isConnected(GlobalPos target) {
+        return connected.contains(target);
     }
 
     boolean hasComputers() {
         return !computers.isEmpty();
+    }
+
+    boolean isMobile() {
+        return MobileHosts.isMobile(modem);
+    }
+
+    /** Where the host is now, for drawing link lines. Server thread only. */
+    @Nullable
+    GlobalPos currentPosition() {
+        if (!(modem.getLevel() instanceof ServerLevel level)) return null;
+        return GlobalPos.of(level.dimension(), BlockPos.containing(modem.getPosition()));
+    }
+
+    /**
+     * A mobile host may have changed dimension (player changed dimension, turtle teleported). Only queues a refresh
+     * if it actually did, so ordinary movement costs nothing.
+     */
+    public void onMoved() {
+        var dimension = publishedDimension;
+        var level = modem.getLevel();
+        if (dimension != null && level != null && !level.dimension().equals(dimension)) HubScheduler.markDirty(this);
     }
 
     /**
@@ -142,24 +168,39 @@ public final class WirelessHub {
             return 0;
         }
 
-        var newKey = computeKey(level);
+        var mobile = MobileHosts.isMobile(modem);
+        var newKey = computeKey(level, mobile);
         if (!newKey.equals(key)) {
             release();
             key = newKey;
         }
-        HubScheduler.register(this, key);
+        HubScheduler.register(this, key, mobile);
+        publishedDimension = level.dimension();
 
-        // Host block must be loaded, a known host, and not blacklisted.
-        if (!level.isLoaded(key.pos())) return publishEmpty();
-        var hostState = level.getBlockState(key.pos());
-        if (!Blacklists.isHost(hostState)) return publishEmpty();
+        // Range: placed hosts use the config range of their block (0 = unlimited) and must be loaded and allowed to
+        // host. Mobile hosts must have an ender modem and are never range-checked: only the dimension matters.
+        double rangeSq = -1;
+        Vec3 hostCentre = null;
+        if (mobile) {
+            if (!modem.isInterdimensional()) return publishEmpty();
+        } else {
+            var placed = (HostKey.Placed) key;
+            if (!level.isLoaded(placed.pos())) return publishEmpty();
+            var hostState = level.getBlockState(placed.pos());
+            if (!Blacklists.isHost(hostState)) return publishEmpty();
+            var range = Blacklists.rangeFor(hostState);
+            if (range > 0) {
+                rangeSq = (double) range * range;
+                hostCentre = Vec3.atCenterOf(placed.pos());
+            }
+        }
 
         var data = LinkSavedData.get(server);
         var links = data.getLinks(key);
 
-        // Drop slots whose link was removed; add slots for new links.
-        var wanted = new HashMap<BlockPos, Link>(links.size());
-        for (var link : links) wanted.put(link.pos(), link);
+        // Drop slots whose link was removed or is in another dimension; add slots for new links.
+        var wanted = new HashMap<GlobalPos, Link>(links.size());
+        for (var link : links) if (link.dimension().equals(level.dimension())) wanted.put(link.target(), link);
         var it = slots.entrySet().iterator();
         while (it.hasNext()) {
             var entry = it.next();
@@ -169,27 +210,21 @@ public final class WirelessHub {
             }
         }
 
-        double range = Blacklists.rangeFor(hostState);
-        double rangeSq = range * range;
-        var hostCentre = Vec3.atCenterOf(key.pos());
-
         var lookups = 0;
         var oldResolved = resolved;
         var next = new LinkedHashMap<String, Resolved>();
-        var nowConnected = new HashSet<BlockPos>();
-        List<BlockPos> gone = null;
+        var nowConnected = new HashSet<GlobalPos>();
+        List<GlobalPos> gone = null;
 
-        for (var link : links) {
-            var slot = slots.get(link.pos());
+        for (var link : wanted.values()) {
+            var slot = slots.get(link.target());
             if (slot == null || !slot.link.face().equals(link.face())) {
                 if (slot != null) slot.alive = false;
                 slot = new Slot(link);
-                slots.put(link.pos(), slot);
-            } else {
-                slot.link = link;
+                slots.put(link.target(), slot);
             }
 
-            if (hostCentre.distanceToSqr(Vec3.atCenterOf(link.pos())) > rangeSq) continue;
+            if (hostCentre != null && hostCentre.distanceToSqr(Vec3.atCenterOf(link.pos())) > rangeSq) continue;
 
             if (slot.cache == null) {
                 var s = slot;
@@ -203,29 +238,34 @@ public final class WirelessHub {
             var peripheral = PeripheralLookup.find(slot.cache);
             if (peripheral == null) {
                 // The chunk is loaded but the block no longer provides a peripheral: it was broken or replaced
-                // (explosion, piston, /setblock, ...). Drop the link, like breaking it by hand does.
+                // (explosion, piston, /setblock, ...). Drop the links to it, like breaking it by hand does.
                 if (gone == null) gone = new ArrayList<>();
-                gone.add(link.pos());
+                gone.add(link.target());
                 continue;
             }
 
             var type = peripheral.getType();
             if (type == null || Blacklists.isPeripheralBlacklisted(level.getBlockState(link.pos()), type)) continue;
 
-            if (!type.equals(slot.link.type())) slot.link = data.retype(key, slot.link, type);
+            var name = data.nameOf(link.target());
+            if (name == null || !type.equals(data.typeOf(link.target()))) {
+                var before = name;
+                name = data.retype(link.target(), type);
+                // The name is shared: other hosts linking this block must switch too.
+                if (!name.equals(before)) markOtherHostsDirty(data.hostsLinking(link.target()));
+            }
 
-            var name = slot.link.name();
             var previous = oldResolved.get(name);
             next.put(name, previous != null && previous.peripheral().equals(peripheral)
                 ? previous
                 : new Resolved(peripheral, ServerContext.get(server).peripheralMethods().getSelfMethods(peripheral)));
-            nowConnected.add(link.pos());
+            nowConnected.add(link.target());
         }
 
         if (gone != null) {
-            for (var pos : gone) {
-                data.removeLink(key, pos);
-                var slot = slots.remove(pos);
+            for (var target : gone) {
+                markOtherHostsDirty(data.removeLinksTo(target));
+                var slot = slots.remove(target);
                 if (slot != null) slot.alive = false;
             }
         }
@@ -233,6 +273,10 @@ public final class WirelessHub {
         publish(next);
         connected = Set.copyOf(nowConnected);
         return lookups;
+    }
+
+    private void markOtherHostsDirty(Set<HostKey> hosts) {
+        for (var host : hosts) if (!host.equals(key)) HubScheduler.markHostDirty(host);
     }
 
     private int publishEmpty() {
@@ -282,18 +326,23 @@ public final class WirelessHub {
         slots.clear();
         publish(Map.of());
         connected = Set.of();
+        publishedDimension = null;
         if (key != null) {
             HubScheduler.unregister(this, key);
             key = null;
         }
     }
 
-    private HostKey computeKey(ServerLevel level) {
+    private HostKey computeKey(ServerLevel level, boolean mobile) {
+        if (mobile) {
+            // A pocket computer's or turtle's modem is only ever attached to its own computer.
+            return new HostKey.Mobile(computers.keySet().iterator().next().getID());
+        }
         // Placed CC modems report the position of the block they are attached to, so use the block entity instead.
         // Other hosts (e.g. CC: Modern servers) report the centre of their own block.
         BlockPos pos = modem.getTarget() instanceof WirelessModemBlockEntity be
             ? be.getBlockPos()
             : BlockPos.containing(modem.getPosition());
-        return new HostKey(level.dimension(), pos);
+        return new HostKey.Placed(level.dimension(), pos);
     }
 }
