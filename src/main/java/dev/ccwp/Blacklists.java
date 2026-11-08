@@ -58,6 +58,7 @@ public final class Blacklists {
         return state.is(ENDER_HOSTS);
     }
 
+    /** Link range of a placed host in blocks; 0 means unlimited within the dimension. */
     public static int rangeFor(BlockState hostState) {
         return isEnderHost(hostState) ? Config.ENDER_LINK_RANGE.get() : Config.WIRELESS_LINK_RANGE.get();
     }

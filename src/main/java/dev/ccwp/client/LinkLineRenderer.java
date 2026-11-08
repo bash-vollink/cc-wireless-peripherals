@@ -31,6 +31,10 @@ public final class LinkLineRenderer {
     private LinkLineRenderer() {
     }
 
+    static int statusColour(byte status) {
+        return STATUS_COLOURS[Math.min(Math.max(status, 0), STATUS_COLOURS.length - 1)];
+    }
+
     @SubscribeEvent
     public static void onLogout(ClientPlayerNetworkEvent.LoggingOut event) {
         ClientLinkView.set(dev.ccwp.net.LinkViewPayload.EMPTY);
@@ -46,11 +50,11 @@ public final class LinkLineRenderer {
 
         var main = player.getMainHandItem();
         var off = player.getOffhandItem();
-        GlobalPos selected;
-        if (PeripheralLinkerItem.isLinker(main)) selected = main.get(ModRegistry.SELECTED_HOST.get());
-        else if (PeripheralLinkerItem.isLinker(off)) selected = off.get(ModRegistry.SELECTED_HOST.get());
-        else return;
+        var linker = PeripheralLinkerItem.isLinker(main) ? main : PeripheralLinkerItem.isLinker(off) ? off : null;
+        if (linker == null) return;
+        GlobalPos selected = linker.get(ModRegistry.SELECTED_HOST.get());
         if (selected != null && !selected.dimension().equals(mc.level.dimension())) selected = null;
+        Integer selectedComputer = linker.get(ModRegistry.SELECTED_COMPUTER.get());
 
         var view = ClientLinkView.get();
         if (view.hosts().isEmpty() && selected == null) return;
@@ -70,16 +74,21 @@ public final class LinkLineRenderer {
 
         boolean drewSelected = false;
         for (var host : view.hosts()) {
-            var hostCentre = Vec3.atCenterOf(host.host());
-            var isSelected = selected != null && selected.pos().equals(host.host());
-            if (!isSelected && hostCentre.distanceToSqr(eye) > maxDistSq) continue;
-            drewSelected |= isSelected;
+            var isSelected = host.isMobile()
+                ? selectedComputer != null && selectedComputer == host.computerId()
+                : selected != null && host.host().isPresent() && selected.pos().equals(host.host().get());
+            // Mobile hosts are only sent when selected; placed ones are filtered by distance.
+            if (!isSelected && host.host().isPresent() && Vec3.atCenterOf(host.host().get()).distanceToSqr(eye) > maxDistSq) continue;
+            drewSelected |= isSelected && !host.isMobile();
 
-            box(poseStack, lines, new AABB(host.host()).inflate(isSelected ? 0.04 : 0.02), isSelected ? 0x40E0FF : 0xC0C0C0, isSelected ? 1f : 0.6f);
+            var alpha = isSelected ? 1f : 0.6f;
+            var hostCentre = host.host().map(Vec3::atCenterOf).orElse(null);
+            if (host.host().isPresent()) {
+                box(poseStack, lines, new AABB(host.host().get()).inflate(isSelected ? 0.04 : 0.02), isSelected ? 0x40E0FF : 0xC0C0C0, alpha);
+            }
             for (var link : host.links()) {
-                var colour = STATUS_COLOURS[Math.min(link.status(), STATUS_COLOURS.length - 1)];
-                var alpha = isSelected ? 1f : 0.6f;
-                line(poseStack, lines, hostCentre, Vec3.atCenterOf(link.pos()), colour, alpha);
+                var colour = statusColour(link.status());
+                if (hostCentre != null) line(poseStack, lines, hostCentre, Vec3.atCenterOf(link.pos()), colour, alpha);
                 box(poseStack, lines, new AABB(link.pos()).inflate(0.01), colour, alpha);
             }
         }

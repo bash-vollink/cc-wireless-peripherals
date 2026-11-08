@@ -1,11 +1,11 @@
 package dev.ccwp.net;
 
 import dev.ccwp.Blacklists;
-import dev.ccwp.ModRegistry;
 import dev.ccwp.data.HostKey;
 import dev.ccwp.data.LinkSavedData;
 import dev.ccwp.hub.HubScheduler;
 import dev.ccwp.item.PeripheralLinkerItem;
+import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.network.PacketDistributor;
@@ -60,34 +60,48 @@ public final class LinkViewSync {
 
     private static LinkViewPayload build(MinecraftServer server, ServerPlayer player) {
         var level = player.serverLevel();
+        var dimension = level.dimension();
         var data = LinkSavedData.get(server);
 
         var keys = new LinkedHashSet<HostKey>();
-        data.forHostsNear(level.dimension(), player.blockPosition(), CHUNK_RADIUS, keys::add);
+        data.forHostsNear(dimension, player.blockPosition(), CHUNK_RADIUS, keys::add);
         for (var stack : List.of(player.getMainHandItem(), player.getOffhandItem())) {
-            var selected = stack.get(ModRegistry.SELECTED_HOST.get());
-            if (selected != null && selected.dimension().equals(level.dimension())) {
-                var key = HostKey.of(selected);
-                if (!data.getLinks(key).isEmpty()) keys.add(key);
-            }
+            if (!PeripheralLinkerItem.isLinker(stack)) continue;
+            var selected = PeripheralLinkerItem.selectedHost(stack);
+            if (selected == null || data.getLinks(selected).isEmpty()) continue;
+            if (selected instanceof HostKey.Placed placed && !placed.dimension().equals(dimension)) continue;
+            keys.add(selected);
         }
         if (keys.isEmpty()) return LinkViewPayload.EMPTY;
 
         var hosts = new ArrayList<LinkViewPayload.HostView>(keys.size());
         List<HostKey> stale = null;
         for (var key : keys) {
-            // Lazily prune hosts whose block is gone (explosions, pistons, /setblock...).
-            if (level.isLoaded(key.pos()) && !Blacklists.isHostType(level.getBlockState(key.pos()))) {
-                if (stale == null) stale = new ArrayList<>();
-                stale.add(key);
-                continue;
+            int computerId = -1;
+            Optional<BlockPos> hostPos;
+            if (key instanceof HostKey.Placed placed) {
+                // Lazily prune hosts whose block is gone (explosions, pistons, /setblock...).
+                if (level.isLoaded(placed.pos()) && !Blacklists.isHostType(level.getBlockState(placed.pos()))) {
+                    if (stale == null) stale = new ArrayList<>();
+                    stale.add(key);
+                    continue;
+                }
+                hostPos = Optional.of(placed.pos());
+            } else {
+                computerId = ((HostKey.Mobile) key).computerId();
+                var now = HubScheduler.currentPosition(key);
+                hostPos = now != null && now.dimension().equals(dimension) ? Optional.of(now.pos()) : Optional.empty();
             }
+
             var links = data.getLinks(key);
             var views = new ArrayList<LinkViewPayload.LinkView>(links.size());
             for (var link : links) {
-                views.add(new LinkViewPayload.LinkView(link.pos(), link.name(), (byte) HubScheduler.status(key, link.pos()).ordinal()));
+                if (!link.dimension().equals(dimension)) continue;
+                var name = data.nameOf(link.target());
+                views.add(new LinkViewPayload.LinkView(link.pos(), name == null ? "?" : name,
+                    (byte) HubScheduler.status(key, link.target()).ordinal()));
             }
-            hosts.add(new LinkViewPayload.HostView(key.pos(), List.copyOf(views)));
+            hosts.add(new LinkViewPayload.HostView(computerId, hostPos, List.copyOf(views)));
         }
         if (stale != null) for (var key : stale) if (data.removeHost(key)) HubScheduler.markHostDirty(key);
         return new LinkViewPayload(List.copyOf(hosts));
