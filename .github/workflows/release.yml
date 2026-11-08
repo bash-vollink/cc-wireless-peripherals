@@ -3,7 +3,9 @@ name: Build and release
 on:
   push:
     branches: [main]
-    tags: ['v*']
+    # MC<minecraft version>-<mod version>[-suffix], e.g. MC1.21.1-1.0.0 or MC1.21.1-1.0.0-beta.1.
+    # v<mod version>[-suffix] still works.
+    tags: ['MC*', 'v*']
   pull_request:
   workflow_dispatch:
 
@@ -15,6 +17,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check release tag
+        id: tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          tag="$GITHUB_REF_NAME"
+          case "$tag" in
+            MC*-*) version="${tag#*-}" ;;  # drop "MC<minecraft version>-"
+            v*) version="${tag#v}" ;;
+            *) echo "::error::Tag $tag is not MC<minecraft version>-<mod version> or v<mod version>"; exit 1 ;;
+          esac
+          # Only a suffix on the mod version makes a prerelease (1.0.0-beta.1), not the dash after the Minecraft version.
+          if [[ "$version" == *-* ]]; then prerelease=true; else prerelease=false; fi
+          mod_version="$(sed -n 's/^mod_version=//p' gradle.properties)"
+          if [[ "${version%%-*}" != "$mod_version" ]]; then
+            echo "::error::Tag $tag is for version ${version%%-*}, but gradle.properties has mod_version=$mod_version"
+            exit 1
+          fi
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "Release $tag: mod version $version, prerelease=$prerelease"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -29,10 +50,10 @@ jobs:
           name: ccwirelessperipherals
           path: build/libs/*.jar
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: build/libs/*.jar
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ steps.tag.outputs.prerelease == 'true' }}
           name: ${{ github.ref_name }}
           body_path: .github/release-notes.md
