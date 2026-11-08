@@ -1,0 +1,10 @@
+{
+  "values": [
+    "computercraft:wireless_modem_normal",
+    "computercraft:wireless_modem_advanced",
+    { "id": "cc_modern:server", "required": false },
+    { "id": "cc_modern:server_advanced", "required": false },
+    { "id": "cc_modern:server_ender", "required": false },
+    { "id": "cc_modern:server_advanced_ender", "required": false }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "equipment",
+  "pattern": [
+    " R ",
+    " M ",
+    " S "
+  ],
+  "key": {
+    "R": { "item": "minecraft:redstone" },
+    "M": { "item": "computercraft:wireless_modem_normal" },
+    "S": { "item": "minecraft:stick" }
+  },
+  "result": { "id": "ccwirelessperipherals:peripheral_linker", "count": 1 }
+}
