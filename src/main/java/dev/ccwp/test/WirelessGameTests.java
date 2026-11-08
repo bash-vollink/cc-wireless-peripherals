@@ -18,10 +18,10 @@ import dev.ccwp.CCWirelessPeripherals;
 import dev.ccwp.Config;
 import dev.ccwp.data.HostKey;
 import dev.ccwp.data.Link;
+import dev.ccwp.data.LinkNames;
 import dev.ccwp.data.LinkSavedData;
 import dev.ccwp.hub.HubScheduler;
 import dev.ccwp.hub.PeripheralLookup;
-import dev.ccwp.hub.WirelessHub;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.gametest.framework.GameTest;
@@ -140,10 +140,11 @@ public final class WirelessGameTests {
         var abs = helper.absolutePos(rel);
         var peripheral = PeripheralLookup.find(level, abs, Direction.UP);
         if (peripheral == null) throw new net.minecraft.gametest.framework.GameTestAssertException("No peripheral at " + rel);
-        var name = WirelessHub.nextName(level.getServer(), peripheral.getType());
-        LinkSavedData.get(level.getServer()).addLink(host, new Link(abs, Direction.UP, peripheral.getType(), name));
+        var data = LinkSavedData.get(level.getServer());
+        var link = data.createLink(level.dimension(), abs, Direction.UP, peripheral.getType());
+        data.addLink(host, link);
         HubScheduler.markHostDirty(host);
-        return name;
+        return link.name();
     }
 
     private static Object[] call(GameTestHelper helper, Setup setup, String method, Object... args) {
@@ -204,6 +205,135 @@ public final class WirelessGameTests {
                 helper.assertTrue(setup.computer().hasEvent("peripheral_detach", chest), "peripheral_detach for chest on computer detach");
             })
             .thenSucceed();
+    }
+
+    private static Link linkAt(GameTestHelper helper, Setup setup, BlockPos rel) {
+        var link = LinkSavedData.get(helper.getLevel().getServer()).findLink(setup.host(), helper.absolutePos(rel));
+        if (link == null) throw new net.minecraft.gametest.framework.GameTestAssertException("No link at " + rel);
+        return link;
+    }
+
+    private static void unlink(GameTestHelper helper, Setup setup, BlockPos rel) {
+        LinkSavedData.get(helper.getLevel().getServer()).removeLink(setup.host(), helper.absolutePos(rel));
+        HubScheduler.markHostDirty(setup.host());
+    }
+
+    private static @Nullable String renameError(GameTestHelper helper, Setup setup, BlockPos rel, @Nullable String name) {
+        var data = LinkSavedData.get(helper.getLevel().getServer());
+        var result = data.rename(setup.host(), linkAt(helper, setup, rel), name);
+        HubScheduler.markHostDirty(setup.host());
+        return result.error();
+    }
+
+    @GameTest(template = "empty", timeoutTicks = 200, batch = "ccwp_names")
+    public static void linkNamesAreStableAndRenamable(GameTestHelper helper) {
+        var setup = placeModem(helper, new BlockPos(1, 1, 1), false);
+        var chestPos = new BlockPos(4, 1, 1);
+        var otherPos = new BlockPos(4, 1, 4);
+        helper.setBlock(chestPos, Blocks.CHEST);
+        helper.setBlock(otherPos, Blocks.BARREL);
+
+        var auto = link(helper, setup.host(), chestPos);
+        var other = link(helper, setup.host(), otherPos);
+        helper.assertTrue(LinkNames.parseAuto("minecraft:chest", auto) >= 0, "automatic name format: " + auto);
+        helper.assertFalse(linkAt(helper, setup, chestPos).custom(), "automatic name is not custom");
+
+        // Unlinking and relinking the same block keeps its name.
+        unlink(helper, setup, chestPos);
+        helper.assertTrue(auto.equals(link(helper, setup.host(), chestPos)), "relinked chest keeps " + auto);
+
+        // Invalid custom names are refused.
+        for (var bad : List.of("top", "storage_3", "storage_w3", "has space", "", "x".repeat(LinkNames.MAX_LENGTH + 1), other)) {
+            helper.assertTrue(renameError(helper, setup, chestPos, bad) != null, "name should be refused: '" + bad + "'");
+        }
+        helper.assertTrue(auto.equals(linkAt(helper, setup, chestPos).name()), "refused rename changes nothing");
+
+        setup.modem().attach(setup.computer());
+        helper.startSequence()
+            .thenWaitUntil(() -> helper.assertTrue(names(helper, setup).contains(auto), "auto name attached"))
+            .thenExecute(() -> helper.assertTrue(renameError(helper, setup, chestPos, "storage") == null, "rename accepted"))
+            .thenWaitUntil(() -> {
+                var n = names(helper, setup);
+                helper.assertTrue(n.contains("storage") && !n.contains(auto), "renamed: " + n);
+            })
+            .thenExecute(() -> {
+                helper.assertTrue(setup.computer().hasEvent("peripheral_detach", auto), "detach event for old name");
+                helper.assertTrue(setup.computer().hasEvent("peripheral", "storage"), "attach event for new name");
+                helper.assertTrue(linkAt(helper, setup, chestPos).custom(), "custom flag set");
+
+                // A custom name also survives unlink + relink.
+                unlink(helper, setup, chestPos);
+                helper.assertTrue("storage".equals(link(helper, setup.host(), chestPos)), "relinked chest keeps custom name");
+                // ...and a type change.
+                helper.setBlock(chestPos, Blocks.BARREL);
+            })
+            .thenWaitUntil(() -> helper.assertTrue("minecraft:barrel".equals(linkAt(helper, setup, chestPos).type()), "type updated"))
+            .thenExecute(() -> {
+                helper.assertTrue("storage".equals(linkAt(helper, setup, chestPos).name()), "custom name kept on type change");
+                // Resetting gives an automatic name for the current type.
+                helper.assertTrue(renameError(helper, setup, chestPos, null) == null, "reset accepted");
+                var reset = linkAt(helper, setup, chestPos);
+                helper.assertTrue(!reset.custom() && LinkNames.parseAuto("minecraft:barrel", reset.name()) >= 0, "reset name: " + reset.name());
+            })
+            .thenWaitUntil(() -> helper.assertTrue(names(helper, setup).contains(linkAt(helper, setup, chestPos).name()), "reset name attached"))
+            .thenExecute(() -> {
+                // An automatic name is replaced when the type changes.
+                var before = linkAt(helper, setup, otherPos).name();
+                helper.setBlock(otherPos, Blocks.CHEST);
+                helper.assertTrue(before.equals(other), "barrel name before type change");
+            })
+            .thenWaitUntil(() -> helper.assertTrue(LinkNames.parseAuto("minecraft:chest", linkAt(helper, setup, otherPos).name()) >= 0,
+                "auto name follows type: " + linkAt(helper, setup, otherPos).name()))
+            .thenExecute(() -> setup.modem().detach(setup.computer()))
+            .thenSucceed();
+    }
+
+    @GameTest(template = "empty", timeoutTicks = 200, batch = "ccwp_name_reuse")
+    public static void freedNamesAreReusedWhenEnabled(GameTestHelper helper) {
+        var setup = placeModem(helper, new BlockPos(1, 1, 1), false);
+        var a = new BlockPos(4, 1, 1);
+        var b = new BlockPos(4, 1, 4);
+        var c = new BlockPos(6, 1, 2);
+        helper.setBlock(a, Blocks.FURNACE);
+        helper.setBlock(b, Blocks.FURNACE);
+        helper.setBlock(c, Blocks.FURNACE);
+
+        var old = Config.REUSE_FREED_NAMES.get();
+        try {
+            Config.REUSE_FREED_NAMES.set(false);
+            var first = link(helper, setup.host(), a);
+            var firstId = LinkNames.parseAuto("minecraft:furnace", first);
+            unlink(helper, setup, a);
+            var second = link(helper, setup.host(), b);
+            helper.assertTrue(LinkNames.parseAuto("minecraft:furnace", second) > firstId, "no reuse when disabled: " + first + " then " + second);
+            unlink(helper, setup, b);
+            helper.assertTrue(first.equals(link(helper, setup.host(), a)), "block a still gets its own name back");
+            unlink(helper, setup, a);
+
+            // A block's own remembered name still wins over the pool.
+            Config.REUSE_FREED_NAMES.set(true);
+            helper.assertTrue(second.equals(link(helper, setup.host(), b)), "block b gets its own name back");
+            // A new block takes the lowest freed number (it may be lower than ours if another test freed one).
+            var reused = link(helper, setup.host(), c);
+            helper.assertTrue(LinkNames.parseAuto("minecraft:furnace", reused) <= firstId, "freed number reused: got " + reused + ", freed " + first);
+            var data = LinkSavedData.get(helper.getLevel().getServer());
+            helper.assertFalse(reused.equals(data.rememberedName(helper.getLevel().dimension(), helper.absolutePos(a))),
+                "a reused name is no longer remembered for its old block");
+
+            // Naming state survives a save/load round trip.
+            var registries = helper.getLevel().registryAccess();
+            var copy = LinkSavedData.load(data.save(new net.minecraft.nbt.CompoundTag(), registries), registries);
+            helper.assertTrue(copy.isLive(reused) && copy.isLive(second), "live names restored");
+            helper.assertTrue(reused.equals(copy.findLink(setup.host(), helper.absolutePos(c)).name()), "links restored");
+            unlink(helper, setup, c);
+            var reloaded = LinkSavedData.load(data.save(new net.minecraft.nbt.CompoundTag(), registries), registries);
+            helper.assertTrue(reused.equals(reloaded.rememberedName(helper.getLevel().dimension(), helper.absolutePos(c))), "remembered names restored");
+            var fresh = reloaded.createLink(helper.getLevel().dimension(), helper.absolutePos(new BlockPos(6, 1, 6)), Direction.UP, "minecraft:furnace");
+            helper.assertFalse(reloaded.isLive(fresh.name()) || fresh.name().equals(second), "counter/pool restored without clashes: " + fresh.name());
+        } finally {
+            Config.REUSE_FREED_NAMES.set(old);
+        }
+        helper.succeed();
     }
 
     // Tests that change global config run in their own batches so they cannot affect each other.

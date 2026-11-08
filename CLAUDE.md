@@ -48,9 +48,18 @@ are found by block tag.
 (`Blacklists`). `HostKey` is the block entity position for CC modem blocks (their `getPosition()` returns the block
 they're attached to) and `BlockPos.containing(getPosition())` for other hosts. All links live in one server-wide
 `data/LinkSavedData` on the overworld, with a chunk index of hosts (for client sync) and a peripheral-position index
-(for removing links when a peripheral is broken). Names follow wired conventions,
-`type + "_" + ServerContext.getNextId("peripheral." + type)` (`WirelessHub.nextName`), and change when the
-peripheral type changes.
+(for removing links when a peripheral is broken).
+
+**Names.** Rules are in `data/LinkNames`, state in `LinkSavedData`. Always make links with `LinkSavedData.createLink` and
+change names with `rename`/`retype`, never by building a `Link` with a name yourself.
+- Automatic names are `type + "_w" + n`, from our own per-type counter. CC's `ids.json` is never used, and the `w`
+  means they can't clash with wired `type_<n>` names. Pre-existing links keep their old wired-style names.
+- Names are unique across all links. When a block loses its last link, its name is remembered by block position (up to
+  `MAX_REMEMBERED`, oldest dropped first), so relinking restores it.
+- Freed automatic numbers go into a per-type pool, which is used only when `reuseFreedNames` is on. Taking a name from
+  the pool makes its old block forget it.
+- Custom names (`Link.custom`) can't end in `_<digits>`/`_w<digits>` or be a side. They survive type changes; automatic
+  names are replaced on a type change.
 
 **Threading and tick cost (multiplayer is a requirement).**
 - All world access happens in `WirelessHub.refresh`, on the server thread, driven by `HubScheduler`'s dirty queue.
@@ -64,7 +73,8 @@ peripheral type changes.
 - `publish()` diffs old and new resolved peripherals, so only changes cause detach/attach events.
 
 **Client.** `net/LinkViewSync` sends `LinkViewPayload` every 10 ticks, and only to players holding the linker and
-only when the view changed. `client/LinkLineRenderer` draws the lines. Status order is
+only when the view changed. `client/LinkLineRenderer` draws the lines, and `client/LinkNameOverlay` shows the names of
+links to the block under the crosshair. Status order is
 `HubScheduler.LinkStatus` (CONNECTED/MISSING/IDLE), and it must match the colour table in the renderer.
 `client/ClientLinkView` must stay free of client-only imports, because the payload handler references it on both
 sides.
@@ -75,6 +85,8 @@ sides.
   `ServerContext`/`MethodSupplier` usage when bumping `cct_version`.
 - The GameTest server ticks as fast as it can, so tests that boot a real CC computer need huge `timeoutTicks`. Tests
   that change global `Config` values must use their own `batch`, because tests in one batch run at the same time.
+- The game test world in `run/world` persists between runs, so `LinkSavedData` (counters, remembered names) carries
+  over. Don't assert exact name numbers.
 - Computer labels are limited to 32 characters, so Lua-driven tests write full results to `ccwp_result.txt` in the
   computer's folder.
 - Stock `peripheral.call` returns `nil` (no error) for unknown names, and the Lua patch keeps that behaviour.

@@ -4,11 +4,9 @@ import dan200.computercraft.shared.ModRegistry;
 import dan200.computercraft.shared.computer.blocks.AbstractComputerBlockEntity;
 import dev.ccwp.CCWirelessPeripherals;
 import dev.ccwp.data.HostKey;
-import dev.ccwp.data.Link;
 import dev.ccwp.data.LinkSavedData;
 import dev.ccwp.hub.HubScheduler;
 import dev.ccwp.hub.PeripheralLookup;
-import dev.ccwp.hub.WirelessHub;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
 import net.minecraft.core.BlockPos;
@@ -104,8 +102,7 @@ public final class ClientSmokeTest {
         for (int i = 0; i < TARGETS.length; i++) {
             var peripheral = PeripheralLookup.find(level, TARGETS[i], Direction.UP);
             if (peripheral == null) continue;
-            data.addLink(i == 2 ? idle : host, new Link(TARGETS[i], Direction.UP, peripheral.getType(),
-                WirelessHub.nextName(server, peripheral.getType())));
+            data.addLink(i == 2 ? idle : host, data.createLink(level.dimension(), TARGETS[i], Direction.UP, peripheral.getType()));
         }
         level.setBlockAndUpdate(TARGETS[1], Blocks.AIR.defaultBlockState()); // now a "missing" link
 

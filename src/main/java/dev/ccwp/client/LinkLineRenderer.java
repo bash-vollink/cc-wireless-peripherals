@@ -31,6 +31,10 @@ public final class LinkLineRenderer {
     private LinkLineRenderer() {
     }
 
+    static int statusColour(byte status) {
+        return STATUS_COLOURS[Math.min(Math.max(status, 0), STATUS_COLOURS.length - 1)];
+    }
+
     @SubscribeEvent
     public static void onLogout(ClientPlayerNetworkEvent.LoggingOut event) {
         ClientLinkView.set(dev.ccwp.net.LinkViewPayload.EMPTY);
@@ -77,7 +81,7 @@ public final class LinkLineRenderer {
 
             box(poseStack, lines, new AABB(host.host()).inflate(isSelected ? 0.04 : 0.02), isSelected ? 0x40E0FF : 0xC0C0C0, isSelected ? 1f : 0.6f);
             for (var link : host.links()) {
-                var colour = STATUS_COLOURS[Math.min(link.status(), STATUS_COLOURS.length - 1)];
+                var colour = statusColour(link.status());
                 var alpha = isSelected ? 1f : 0.6f;
                 line(poseStack, lines, hostCentre, Vec3.atCenterOf(link.pos()), colour, alpha);
                 box(poseStack, lines, new AABB(link.pos()).inflate(0.01), colour, alpha);

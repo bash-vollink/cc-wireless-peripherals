@@ -212,11 +212,7 @@ public final class WirelessHub {
             var type = peripheral.getType();
             if (type == null || Blacklists.isPeripheralBlacklisted(level.getBlockState(link.pos()), type)) continue;
 
-            if (!type.equals(slot.link.type())) {
-                var renamed = slot.link.withName(type, nextName(server, type));
-                data.replaceLink(key, slot.link, renamed);
-                slot.link = renamed;
-            }
+            if (!type.equals(slot.link.type())) slot.link = data.retype(key, slot.link, type);
 
             var name = slot.link.name();
             var previous = oldResolved.get(name);
@@ -299,9 +295,5 @@ public final class WirelessHub {
             ? be.getBlockPos()
             : BlockPos.containing(modem.getPosition());
         return new HostKey(level.dimension(), pos);
-    }
-
-    public static String nextName(MinecraftServer server, String type) {
-        return type + "_" + ServerContext.get(server).getNextId("peripheral." + type);
     }
 }

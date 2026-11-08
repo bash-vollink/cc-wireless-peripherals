@@ -13,6 +13,7 @@ public final class Config {
     public static final ModConfigSpec.IntValue WIRELESS_LINK_RANGE;
     public static final ModConfigSpec.IntValue ENDER_LINK_RANGE;
     public static final ModConfigSpec.IntValue MAX_LINKS_PER_HOST;
+    public static final ModConfigSpec.BooleanValue REUSE_FREED_NAMES;
     public static final ModConfigSpec.IntValue MAX_RESOLVES_PER_TICK;
     public static final ModConfigSpec.ConfigValue<List<? extends String>> PERIPHERAL_BLACKLIST;
     public static final ModConfigSpec.ConfigValue<List<? extends String>> HOST_BLACKLIST;
@@ -35,6 +36,12 @@ public final class Config {
         MAX_LINKS_PER_HOST = server
             .comment("Maximum number of peripherals that can be linked to a single host. 0 = unlimited.")
             .defineInRange("maxLinksPerHost", 32, 0, 4096);
+        REUSE_FREED_NAMES = server
+            .comment("Reuse the numbers of automatic link names (e.g. minecraft:chest_w3) that are no longer in use, so the",
+                "numbers stay small. Relinking the same block always restores its old name either way. With this on, a",
+                "freed name can go to a different block, so a script that hard-codes it may end up talking to another",
+                "peripheral. Wired modems never reuse names.")
+            .define("reuseFreedNames", false);
         PERIPHERAL_BLACKLIST = server
             .comment("Peripherals that cannot be linked wirelessly. Entries may be:",
                 "  a block id         e.g. \"minecraft:chest\"",

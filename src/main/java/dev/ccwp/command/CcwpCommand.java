@@ -1,6 +1,7 @@
 package dev.ccwp.command;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import dev.ccwp.Blacklists;
@@ -15,8 +16,11 @@ import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.coordinates.BlockPosArgument;
 import net.minecraft.network.chat.Component;
 
+import javax.annotation.Nullable;
+
 /**
- * {@code /ccwp list [pos]}, {@code /ccwp clear <pos>}, {@code /ccwp reload}.
+ * {@code /ccwp list [pos]}, {@code /ccwp rename <peripheral pos> [name]}, {@code /ccwp clear <pos>},
+ * {@code /ccwp reload}.
  */
 public final class CcwpCommand {
     private CcwpCommand() {
@@ -28,6 +32,11 @@ public final class CcwpCommand {
                 .executes(CcwpCommand::listSelected)
                 .then(Commands.argument("pos", BlockPosArgument.blockPos())
                     .executes(ctx -> list(ctx, new HostKey(ctx.getSource().getLevel().dimension(), BlockPosArgument.getBlockPos(ctx, "pos"))))))
+            .then(Commands.literal("rename")
+                .then(Commands.argument("pos", BlockPosArgument.blockPos())
+                    .executes(ctx -> rename(ctx, null))
+                    .then(Commands.argument("name", StringArgumentType.greedyString())
+                        .executes(ctx -> rename(ctx, StringArgumentType.getString(ctx, "name").trim())))))
             .then(Commands.literal("clear")
                 .requires(s -> s.hasPermission(2))
                 .then(Commands.argument("pos", BlockPosArgument.blockPos())
@@ -71,6 +80,34 @@ public final class CcwpCommand {
                 + " [" + status.name().toLowerCase(java.util.Locale.ROOT) + "]").withStyle(colour), false);
         }
         return links.size();
+    }
+
+    private static int rename(CommandContext<CommandSourceStack> ctx, @Nullable String name) throws CommandSyntaxException {
+        var source = ctx.getSource();
+        var level = source.getLevel();
+        var pos = BlockPosArgument.getBlockPos(ctx, "pos");
+
+        HostKey preferred = null;
+        var player = source.getPlayer();
+        if (player != null) {
+            // Same rule as editing links with the linker: players need to be able to modify the block.
+            if (!source.hasPermission(2) && !level.mayInteract(player, pos)) {
+                source.sendFailure(Component.translatable("message.ccwirelessperipherals.no_permission"));
+                return 0;
+            }
+            for (var stack : new net.minecraft.world.item.ItemStack[]{ player.getMainHandItem(), player.getOffhandItem() }) {
+                if (PeripheralLinkerItem.isLinker(stack) && (preferred = PeripheralLinkerItem.selectedHost(stack)) != null) break;
+            }
+        }
+
+        var data = LinkSavedData.get(source.getServer());
+        var target = PeripheralLinkerItem.pickLink(data, level.dimension(), pos, preferred, source::sendFailure);
+        if (target == null) return 0;
+        var ok = PeripheralLinkerItem.rename(data, target, name, (message, success) -> {
+            if (success) source.sendSuccess(() -> message, true);
+            else source.sendFailure(message);
+        });
+        return ok ? 1 : 0;
     }
 
     private static int clear(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
