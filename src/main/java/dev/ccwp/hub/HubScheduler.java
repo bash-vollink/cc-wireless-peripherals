@@ -82,7 +82,7 @@ public final class HubScheduler {
     public enum LinkStatus {
         /** A computer is using the host and the peripheral is attached. */
         CONNECTED,
-        /** A computer is using the host but the peripheral is missing, unloaded, out of range or blacklisted. */
+        /** A computer is using the host but the peripheral is unloaded, out of range or blacklisted. */
         MISSING,
         /** No computer is currently using the host's modem, so links are dormant. */
         IDLE

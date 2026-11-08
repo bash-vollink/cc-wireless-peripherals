@@ -76,11 +76,18 @@ public final class CCWirelessPeripherals {
         LinkViewSync.clear();
     }
 
-    /** Breaking a host drops its links, like breaking a wired modem drops its connections. */
+    /**
+     * Breaking a host drops its links, like breaking a wired modem drops its connections; breaking a linked
+     * peripheral drops the links to it. (Non-player removals are caught when the host next refreshes.)
+     */
     private void onBlockBreak(BlockEvent.BreakEvent event) {
-        if (event.isCanceled() || !(event.getLevel() instanceof ServerLevel level) || !Blacklists.isHostType(event.getState())) return;
-        var key = new HostKey(level.dimension(), event.getPos());
-        if (LinkSavedData.get(level.getServer()).removeHost(key)) HubScheduler.markHostDirty(key);
+        if (event.isCanceled() || !(event.getLevel() instanceof ServerLevel level)) return;
+        var data = LinkSavedData.get(level.getServer());
+        if (Blacklists.isHostType(event.getState())) {
+            var key = new HostKey(level.dimension(), event.getPos());
+            if (data.removeHost(key)) HubScheduler.markHostDirty(key);
+        }
+        for (var host : data.removeLinksTo(level.dimension(), event.getPos())) HubScheduler.markHostDirty(host);
     }
 
     private void onRegisterCommands(RegisterCommandsEvent event) {

@@ -177,6 +177,7 @@ public final class WirelessHub {
         var oldResolved = resolved;
         var next = new LinkedHashMap<String, Resolved>();
         var nowConnected = new HashSet<BlockPos>();
+        List<BlockPos> gone = null;
 
         for (var link : links) {
             var slot = slots.get(link.pos());
@@ -200,7 +201,13 @@ public final class WirelessHub {
 
             lookups++;
             var peripheral = PeripheralLookup.find(slot.cache);
-            if (peripheral == null) continue;
+            if (peripheral == null) {
+                // The chunk is loaded but the block no longer provides a peripheral: it was broken or replaced
+                // (explosion, piston, /setblock, ...). Drop the link, like breaking it by hand does.
+                if (gone == null) gone = new ArrayList<>();
+                gone.add(link.pos());
+                continue;
+            }
 
             var type = peripheral.getType();
             if (type == null || Blacklists.isPeripheralBlacklisted(level.getBlockState(link.pos()), type)) continue;
@@ -217,6 +224,14 @@ public final class WirelessHub {
                 ? previous
                 : new Resolved(peripheral, ServerContext.get(server).peripheralMethods().getSelfMethods(peripheral)));
             nowConnected.add(link.pos());
+        }
+
+        if (gone != null) {
+            for (var pos : gone) {
+                data.removeLink(key, pos);
+                var slot = slots.remove(pos);
+                if (slot != null) slot.alive = false;
+            }
         }
 
         publish(next);

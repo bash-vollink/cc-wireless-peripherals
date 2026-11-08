@@ -197,6 +197,8 @@ public final class WirelessGameTests {
             .thenWaitUntil(() -> helper.assertFalse(names(helper, setup).contains(drive), "drive should be gone"))
             .thenExecute(() -> {
                 helper.assertTrue(setup.computer().hasEvent("peripheral_detach", drive), "peripheral_detach for drive");
+                helper.assertTrue(LinkSavedData.get(helper.getLevel().getServer()).findLink(setup.host(), helper.absolutePos(new BlockPos(5, 1, 4))) == null,
+                    "link to the broken drive is removed");
                 helper.assertTrue(HubScheduler.pendingCount() == 0, "no pending work once settled");
                 setup.modem().detach(setup.computer());
                 helper.assertTrue(setup.computer().hasEvent("peripheral_detach", chest), "peripheral_detach for chest on computer detach");
@@ -247,6 +249,16 @@ public final class WirelessGameTests {
             .thenExecute(() -> {
                 restore.run();
                 setup.modem().detach(setup.computer());
+
+                // A player breaking a linked peripheral removes its link, even if it was never attached.
+                var level = helper.getLevel();
+                var farPos = helper.absolutePos(new BlockPos(8, 1, 1));
+                var player = net.neoforged.neoforge.common.util.FakePlayerFactory.getMinecraft(level);
+                net.neoforged.neoforge.common.NeoForge.EVENT_BUS.post(
+                    new net.neoforged.neoforge.event.level.BlockEvent.BreakEvent(level, farPos, level.getBlockState(farPos), player));
+                var data = LinkSavedData.get(level.getServer());
+                helper.assertTrue(data.findLink(setup.host(), farPos) == null, "broken peripheral's link removed");
+                helper.assertTrue(data.findLink(setup.host(), helper.absolutePos(new BlockPos(3, 1, 1))) != null, "other link kept");
             })
             .thenSucceed();
     }

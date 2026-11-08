@@ -36,6 +36,8 @@ public final class LinkSavedData extends SavedData {
     private final Map<HostKey, List<Link>> hosts = new LinkedHashMap<>();
     /** dimension -> chunk (of host) -> hosts in that chunk. */
     private final Map<ResourceKey<Level>, Long2ObjectMap<Set<HostKey>>> chunkIndex = new HashMap<>();
+    /** dimension -> peripheral position -> hosts linking to it (for removing links when a peripheral is broken). */
+    private final Map<ResourceKey<Level>, Map<BlockPos, Set<HostKey>>> targetIndex = new HashMap<>();
     /** Incremented on every change; cheap change detection for the client sync. */
     private int revision;
 
@@ -53,6 +55,7 @@ public final class LinkSavedData extends SavedData {
                     if (entry.links().isEmpty()) continue;
                     data.hosts.put(entry.host(), new ArrayList<>(entry.links()));
                     data.index(entry.host());
+                    for (var link : entry.links()) data.indexTarget(entry.host(), link.pos());
                 }
             });
         return data;
@@ -93,12 +96,14 @@ public final class LinkSavedData extends SavedData {
         if (list.isEmpty()) index(host);
         list.removeIf(l -> l.pos().equals(link.pos()));
         list.add(link);
+        indexTarget(host, link.pos());
         changed();
     }
 
     public boolean removeLink(HostKey host, BlockPos pos) {
         var list = hosts.get(host);
         if (list == null || !list.removeIf(l -> l.pos().equals(pos))) return false;
+        unindexTarget(host, pos);
         if (list.isEmpty()) removeHost(host);
         else changed();
         return true;
@@ -114,7 +119,9 @@ public final class LinkSavedData extends SavedData {
     }
 
     public boolean removeHost(HostKey host) {
-        if (hosts.remove(host) == null) return false;
+        var removed = hosts.remove(host);
+        if (removed == null) return false;
+        for (var link : removed) unindexTarget(host, link.pos());
         var dim = chunkIndex.get(host.dimension());
         if (dim != null) {
             var chunk = ChunkPos.asLong(host.pos());
@@ -139,6 +146,35 @@ public final class LinkSavedData extends SavedData {
                 if (set != null) set.forEach(consumer);
             }
         }
+    }
+
+    /**
+     * Remove every link pointing at a peripheral position (the peripheral block was broken).
+     *
+     * @return The hosts that lost a link.
+     */
+    public Set<HostKey> removeLinksTo(ResourceKey<Level> dimension, BlockPos pos) {
+        var dim = targetIndex.get(dimension);
+        var linked = dim == null ? null : dim.get(pos);
+        if (linked == null || linked.isEmpty()) return Set.of();
+        var affected = Set.copyOf(linked);
+        for (var host : affected) removeLink(host, pos);
+        return affected;
+    }
+
+    private void indexTarget(HostKey host, BlockPos pos) {
+        targetIndex.computeIfAbsent(host.dimension(), k -> new HashMap<>())
+            .computeIfAbsent(pos.immutable(), k -> new HashSet<>(2))
+            .add(host);
+    }
+
+    private void unindexTarget(HostKey host, BlockPos pos) {
+        var dim = targetIndex.get(host.dimension());
+        if (dim == null) return;
+        var set = dim.get(pos);
+        if (set == null) return;
+        set.remove(host);
+        if (set.isEmpty()) dim.remove(pos);
     }
 
     private void index(HostKey host) {

@@ -7,7 +7,9 @@ wireless/ender modem or a CC: Modern server without cables. Computers then use t
 1. Craft a **Peripheral Linker** (redstone / wireless modem / stick, stacked vertically).
 2. Right-click a wireless modem, an ender modem, or a CC: Modern server to select it.
 3. Right-click peripherals in range to link them. Click a linked block again to unlink it. Sneak + right-click air clears the selection.
-4. Hold the linker to see the lines: green = attached, red = missing/unloaded/out of range/blacklisted, yellow = no computer is using the host.
+4. Hold the linker to see the lines: green = attached, red = out of range, unloaded or blacklisted, yellow = no computer is using the host.
+
+Breaking a linked peripheral removes its link. Breaking a host removes all of that host's links.
 
 ```lua
 peripheral.getNames()                      --> { "top", "minecraft:chest_0", ... }
