@@ -22,9 +22,13 @@ wired ones work. Mod id `ccwirelessperipherals`, package `dev.ccwp`.
   Pull CC's `peripheral.lua` from the CC jar (`data/computercraft/lua/rom/apis/peripheral.lua`).
 - `./gradlew runSmokeClient` is a dev-only visual check (`ClientSmokeTest`, `-Dccwp.smoke=true`). It needs a world at
   `run/saves/ccwp_smoke` and is very slow without a GPU.
-- CI (`.github/workflows/release.yml`) builds and runs the game tests on every push. A pushed `v*` tag publishes a
-  GitHub release with the jar; tags containing `-` become prereleases, and the notes come from
-  `.github/release-notes.md`.
+- CI (`.github/workflows/release.yml`) builds and runs the game tests on pushes to `main` and on PRs. A pushed release
+  tag publishes a GitHub release with the jar, with notes from `.github/release-notes.md`.
+  - Tags are `MC<minecraft version>-<mod version>[-suffix]`, e.g. `MC1.21.1-1.0.0`; `v<mod version>[-suffix]` also
+    works.
+  - Only a suffix on the mod version (`MC1.21.1-1.0.0-beta.1`) makes a prerelease.
+  - The mod version in the tag must match `mod_version` in `gradle.properties`, or the run fails before building.
+  - GitHub runs the workflow file from the tagged commit, so tag a commit that already has the current workflow.
 
 ## Architecture (the parts that span files)
 **How Lua sees linked peripherals.** CC's `rom/apis/peripheral.lua` already sends remote lookups to any *side*
